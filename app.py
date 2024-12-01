@@ -82,9 +82,30 @@ def upload_image():
     db.session.commit()
 
     # Envoyer un e-mail avec la pièce jointe
+    server_url = "http://localhost:5000"  # Remplacez par l'adresse de votre serveur
+    image_url = f"{server_url}/images/{filename}"
+    email_subject = "⚠️ Alerte Sécurité - Mouvement détecté"
+    email_body = f"""
+    Bonjour,
+
+    Une alerte de sécurité a été générée à {datetime.now().strftime('%d/%m/%Y à %H:%M:%S')}.
+
+    Détails :
+    - Nom du fichier : {filename}
+    - Chemin de l'image : {file_path}
+
+    Vous pouvez consulter l'image directement en cliquant sur ce lien :
+    {image_url}
+
+    Veuillez vérifier immédiatement.
+
+    Cordialement,
+    Votre Système de Sécurité.
+    """
+
     send_email_with_attachment(
-        subject="Alerte Sécurité - Mouvement détecté",
-        body=f"Une nouvelle image a été capturée : {filename}.",
+        subject=email_subject,
+        body=email_body,
         to_email="destinataire_email@gmail.com",
         attachment_path=file_path
     )
