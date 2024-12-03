@@ -89,7 +89,7 @@ def upload_image():
     Bonjour,
 
     Une alerte de sécurité a été générée à {datetime.now().strftime('%d/%m/%Y à %H:%M:%S')}.
-
+    
     Détails :
     - Nom du fichier : {filename}
     - Chemin de l'image : {file_path}
@@ -156,6 +156,62 @@ def cleanup():
     """
     cleanup_old_files()
     return jsonify({"message": "Nettoyage terminé"})
+
+# Endpoint pour supprimer un log spécifique
+@app.route('/logs/<int:log_id>', methods=['DELETE'])
+def delete_log(log_id):
+    """
+    Endpoint pour supprimer un log spécifique.
+    ---
+    parameters:
+      - name: log_id
+        in: path
+        type: integer
+        required: true
+        description: ID de l'événement à supprimer
+    responses:
+        200:
+            description: Log supprimé avec succès
+        404:
+            description: Log introuvable
+    """
+    event = DetectionEvent.query.get(log_id)
+    if not event:
+        return jsonify({"error": "Log introuvable"}), 404
+
+    # Supprimer le fichier associé si existant
+    if os.path.exists(event.image_path):
+        os.remove(event.image_path)
+        print(f"Fichier associé supprimé : {event.image_path}")
+
+    # Supprimer l'événement de la base de données
+    db.session.delete(event)
+    db.session.commit()
+
+    return jsonify({"message": f"Log avec ID {log_id} supprimé avec succès"}), 200
+
+# Endpoint pour supprimer tous les logs
+@app.route('/logs', methods=['DELETE'])
+def delete_all_logs():
+    """
+    Endpoint pour supprimer tous les logs.
+    ---
+    responses:
+        200:
+            description: Tous les logs ont été supprimés
+    """
+    events = DetectionEvent.query.all()
+    for event in events:
+        # Supprimer les fichiers associés
+        if os.path.exists(event.image_path):
+            os.remove(event.image_path)
+            print(f"Fichier associé supprimé : {event.image_path}")
+
+        # Supprimer l'événement de la base de données
+        db.session.delete(event)
+
+    db.session.commit()
+    return jsonify({"message": "Tous les logs ont été supprimés avec succès"}), 200
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
