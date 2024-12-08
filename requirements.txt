@@ -10,7 +10,6 @@ charset-normalizer==3.4.0
 click==8.1.7
 colorama==0.4.6
 cryptography==44.0.0
-dlib @ file:///C:/Users/Montassar/Downloads/dlib-19.24.6-cp38-cp38-win_amd64.whl#sha256=5526e117645c63ded99ad3be013111f8ddddd3593a0ffb02495bc2032a83bc60
 ecdsa==0.19.0
 esptool==4.8.1
 face-recognition==1.3.0
