@@ -108,21 +108,25 @@ def train_model():
             continue
 
         label_map[label_id] = label_name
+        images_loaded = 0
         for image_name in os.listdir(label_dir):
             image_path = os.path.join(label_dir, image_name)
             image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
             if image is None:
+                app.logger.warning(f"Image non valide ignorée : {image_path}")
                 continue
 
             resized_image = cv2.resize(image, IMAGE_SIZE)
             faces.append(resized_image)
             labels.append(label_id)
+            images_loaded += 1
 
+        app.logger.info(f"Chargé {images_loaded} images pour le label {label_name}.")
         label_id += 1
 
     if len(faces) == 0:
-        app.logger.error("Erreur : Aucun visage connu chargé.")
-        exit()
+        app.logger.error("Erreur : Aucun visage connu chargé. Ajoutez des images dans 'KNOWN_FACES_DIR'.")
+        raise ValueError("Aucun visage connu trouvé pour entraîner le modèle.")
 
     faces = np.array(faces, dtype="uint8")
     labels = np.array(labels, dtype="int32")
@@ -132,42 +136,53 @@ def train_model():
     return label_map
 
 def detect_and_recognize_faces(image_path, label_map):
-    image = cv2.imread(image_path)
-    if image is None:
-        app.logger.error("L'image n'a pas pu être chargée.")
-        raise ValueError("L'image est invalide ou corrompue.")
+    try:
+        image = cv2.imread(image_path)
+        if image is None:
+            app.logger.error("L'image n'a pas pu être chargée.")
+            raise ValueError("L'image est invalide ou corrompue.")
 
-    gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    faces = face_cascade.detectMultiScale(
-        gray_image,
-        scaleFactor=1.1,
-        minNeighbors=5,
-        minSize=(30, 30)
-    )
+        gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(
+            gray_image,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(30, 30)
+        )
 
-    face_detected = False
-    for (x, y, w, h) in faces:
-        face = gray_image[y:y+h, x:x+w]
-        face = cv2.resize(face, (200, 200))
+        if len(faces) == 0:
+            app.logger.warning("Aucun visage détecté.")
+            return False, None
 
-        label, confidence = face_recognizer.predict(face)
-        name = label_map.get(label, "Inconnu") if confidence < 50 else "Inconnu"
+        face_detected = False
+        for (x, y, w, h) in faces:
+            face = gray_image[y:y+h, x:x+w]
+            face = cv2.resize(face, (200, 200))
 
-        color = (0, 255, 0) if name != "Inconnu" else (0, 0, 255)
-        cv2.rectangle(image, (x, y), (x+w, y+h), color, 2)
-        cv2.putText(image, f"{name} ({confidence:.2f})", (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+            label, confidence = face_recognizer.predict(face)
+            name = label_map.get(label, "Inconnu") if confidence < 50 else "Inconnu"
 
-        if name == "Inconnu":
-            face_detected = True
+            color = (0, 255, 0) if name != "Inconnu" else (0, 0, 255)
+            cv2.rectangle(image, (x, y), (x+w, y+h), color, 2)
+            cv2.putText(image, f"{name} ({confidence:.2f})", (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    annotated_image_path = os.path.join(ANNOTATED_IMAGES_DIR, f"annotated_{timestamp}.jpg")
-    cv2.imwrite(annotated_image_path, image)
+            if name == "Inconnu":
+                face_detected = True
 
-    if face_detected:
-        send_alert_email(annotated_image_path)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        annotated_image_path = os.path.join(ANNOTATED_IMAGES_DIR, f"annotated_{timestamp}.jpg")
+        cv2.imwrite(annotated_image_path, image)
 
-    return face_detected, annotated_image_path
+        if face_detected:
+            send_alert_email(annotated_image_path)
+
+        return face_detected, annotated_image_path
+    except cv2.error as e:
+        app.logger.error(f"Erreur OpenCV pendant la reconnaissance : {e}")
+        raise
+    except Exception as e:
+        app.logger.error(f"Erreur pendant la détection et reconnaissance des visages : {e}")
+        raise
 
 @app.route('/upload', methods=['POST'])
 def upload_and_analyze_image():
@@ -189,6 +204,11 @@ def upload_and_analyze_image():
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         app.logger.info(f"Sauvegarde du fichier : {file_path}")
         file.save(file_path)
+
+        # Vérifier si le modèle est prêt
+        if label_map is None:
+            app.logger.error("Le modèle LBPH n'a pas été entraîné.")
+            return jsonify({"error": "Le modèle n'a pas été entraîné. Ajoutez des visages connus."}), 500
 
         # Analyser l'image
         app.logger.info("Analyse de l'image...")
