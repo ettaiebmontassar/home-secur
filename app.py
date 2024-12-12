@@ -178,18 +178,25 @@ def upload_and_analyze_image():
         app.logger.error("Aucun fichier sélectionné.")
         return jsonify({"error": "Aucun fichier sélectionné."}), 400
 
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    filename = f"{timestamp}_{file.filename}"
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    file.save(file_path)
+    try:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"{timestamp}_{file.filename}"
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(file_path)
+        app.logger.info(f"Fichier sauvegardé : {file_path}")
 
-    unknown_detected, annotated_image_path = detect_and_recognize_faces(file_path, label_map)
+        unknown_detected, annotated_image_path = detect_and_recognize_faces(file_path, label_map)
+        app.logger.info(f"Analyse terminée. Visage inconnu : {unknown_detected}")
 
-    event = DetectionEvent(image_path=file_path, annotated_image_path=annotated_image_path)
-    db.session.add(event)
-    db.session.commit()
+        event = DetectionEvent(image_path=file_path, annotated_image_path=annotated_image_path)
+        db.session.add(event)
+        db.session.commit()
+        app.logger.info("Événement enregistré dans la base de données.")
 
-    return jsonify({"message": "Image reçue et analysée.", "filename": filename, "unknown_detected": unknown_detected}), 200
+        return jsonify({"message": "Image reçue et analysée.", "filename": filename, "unknown_detected": unknown_detected}), 200
+    except Exception as e:
+        app.logger.error(f"Erreur pendant le traitement de l'image : {e}")
+        return jsonify({"error": "Erreur interne du serveur"}), 500
 
 @app.route('/logs', methods=['GET'])
 def get_logs():
