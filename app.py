@@ -11,6 +11,10 @@ from email.mime.base import MIMEBase
 from email import encoders
 import smtplib
 from dotenv import load_dotenv
+import logging
+
+# Initialiser les logs
+logging.basicConfig(level=logging.DEBUG)
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -57,9 +61,6 @@ with app.app_context():
     db.create_all()
 
 def send_alert_email(image_path):
-    """
-    Envoie une alerte par email avec l'image annotée en pièce jointe.
-    """
     try:
         subject = "⚠️ Alerte de sécurité : Visage inconnu détecté"
         body = "Un visage inconnu a été détecté par le système de sécurité. Veuillez vérifier l'image en pièce jointe."
@@ -85,15 +86,12 @@ def send_alert_email(image_path):
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             server.send_message(message)
 
-        print("Alerte email envoyée avec l'image annotée.")
+        app.logger.info("Alerte email envoyée avec l'image annotée.")
     except Exception as e:
-        print(f"Erreur lors de l'envoi de l'email : {e}")
+        app.logger.error(f"Erreur lors de l'envoi de l'email : {e}")
 
 def train_model():
-    """
-    Entraîne le modèle LBPH avec les visages connus.
-    """
-    print("Entraînement du modèle LBPH...")
+    app.logger.info("Entraînement du modèle LBPH...")
     faces = []
     labels = []
     label_id = 0
@@ -120,23 +118,20 @@ def train_model():
         label_id += 1
 
     if len(faces) == 0:
-        print("Erreur : Aucun visage connu chargé.")
+        app.logger.error("Erreur : Aucun visage connu chargé.")
         exit()
 
     faces = np.array(faces, dtype="uint8")
     labels = np.array(labels, dtype="int32")
 
     face_recognizer.train(faces, labels)
-    print("Modèle entraîné avec succès !")
+    app.logger.info("Modèle entraîné avec succès !")
     return label_map
 
 def detect_and_recognize_faces(image_path, label_map):
-    """
-    Détecte et reconnaît les visages dans une image.
-    """
     image = cv2.imread(image_path)
     if image is None:
-        print("L'image n'a pas pu être chargée.")
+        app.logger.error("L'image n'a pas pu être chargée.")
         return False, None
 
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -173,14 +168,14 @@ def detect_and_recognize_faces(image_path, label_map):
 
 @app.route('/upload', methods=['POST'])
 def upload_and_analyze_image():
-    """
-    Endpoint pour télécharger et analyser une image.
-    """
+    app.logger.info("Requête reçue pour téléversement d'image.")
     if 'file' not in request.files:
+        app.logger.error("Aucun fichier trouvé dans la requête.")
         return jsonify({"error": "Aucun fichier envoyé. Utilisez le champ 'file'."}), 400
 
     file = request.files['file']
     if file.filename == '':
+        app.logger.error("Aucun fichier sélectionné.")
         return jsonify({"error": "Aucun fichier sélectionné."}), 400
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -198,49 +193,35 @@ def upload_and_analyze_image():
 
 @app.route('/logs', methods=['GET'])
 def get_logs():
+    app.logger.info("Requête reçue pour récupérer les logs.")
     events = DetectionEvent.query.all()
-    logs = [{"id": event.id, "timestamp": event.timestamp, "image_path": event.image_path, "annotated_image_path": event.annotated_image_path} for event in events]
+    logs = [
+        {
+            "id": event.id,
+            "timestamp": event.timestamp,
+            "image_path": event.image_path,
+            "annotated_image_path": event.annotated_image_path
+        }
+        for event in events
+    ]
     return jsonify(logs)
 
 @app.route('/images/<filename>', methods=['GET'])
 def get_image(filename):
-    """
-    Récupérer une image spécifique.
-    """
+    app.logger.info(f"Requête reçue pour récupérer l'image : {filename}")
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 @app.route('/cleanup', methods=['GET'])
 def cleanup_old_files():
-    """
-    Nettoyer les fichiers anciens (plus de 7 jours).
-    """
+    app.logger.info("Requête reçue pour nettoyer les fichiers anciens.")
     now = time.time()
     for folder in [UPLOAD_FOLDER, ANNOTATED_IMAGES_DIR]:
         for filename in os.listdir(folder):
             file_path = os.path.join(folder, filename)
             if os.path.isfile(file_path) and now - os.path.getmtime(file_path) > 7 * 86400:
                 os.remove(file_path)
-                print(f"Fichier supprimé : {file_path}")
+                app.logger.info(f"Fichier supprimé : {file_path}")
     return jsonify({"message": "Nettoyage terminé"}), 200
-
-@app.route('/logs/<int:log_id>', methods=['DELETE'])
-def delete_log(log_id):
-    """
-    Supprimer un log spécifique.
-    """
-    event = DetectionEvent.query.get(log_id)
-    if not event:
-        return jsonify({"error": "Log introuvable"}), 404
-
-    if os.path.exists(event.image_path):
-        os.remove(event.image_path)
-    if os.path.exists(event.annotated_image_path):
-        os.remove(event.annotated_image_path)
-
-    db.session.delete(event)
-    db.session.commit()
-
-    return jsonify({"message": f"Log avec ID {log_id} supprimé avec succès"}), 200
 
 if __name__ == '__main__':
     global label_map
