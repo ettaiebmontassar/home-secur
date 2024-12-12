@@ -10,11 +10,14 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 import smtplib
+from dotenv import load_dotenv
 
-# Configuration pour les emails
-EMAIL_SENDER = "taiebmontassar2003@gmail.com"
-EMAIL_PASSWORD = "dnan xjkd ilqx fafj"
-EMAIL_RECIPIENT = "ettaiebmontassar@gmail.com"
+# Charger les variables d'environnement
+load_dotenv()
+
+EMAIL_SENDER = os.getenv('EMAIL_SENDER')
+EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
+EMAIL_RECIPIENT = os.getenv('EMAIL_RECIPIENT')
 
 # Dossiers pour les données
 KNOWN_FACES_DIR = "./known_faces"
@@ -28,6 +31,7 @@ app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_FILE
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['ANNOTATED_IMAGES_FOLDER'] = ANNOTATED_IMAGES_DIR
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # Limite : 16 Mo
 
 # Initialisation de la base de données
 db = SQLAlchemy(app)
@@ -60,14 +64,12 @@ def send_alert_email(image_path):
         subject = "⚠️ Alerte de sécurité : Visage inconnu détecté"
         body = "Un visage inconnu a été détecté par le système de sécurité. Veuillez vérifier l'image en pièce jointe."
 
-        # Configurer le contenu de l'email
         message = MIMEMultipart()
         message["From"] = EMAIL_SENDER
         message["To"] = EMAIL_RECIPIENT
         message["Subject"] = subject
         message.attach(MIMEText(body, "plain"))
 
-        # Ajouter l'image annotée en pièce jointe
         with open(image_path, "rb") as attachment:
             part = MIMEBase("application", "octet-stream")
             part.set_payload(attachment.read())
@@ -78,7 +80,6 @@ def send_alert_email(image_path):
         )
         message.attach(part)
 
-        # Envoyer l'email
         with smtplib.SMTP("smtp.gmail.com", 587) as server:
             server.starttls()
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
@@ -175,15 +176,17 @@ def upload_and_analyze_image():
     """
     Endpoint pour télécharger et analyser une image.
     """
-    if not request.data or request.content_length == 0:
-        return jsonify({"error": "Aucune donnée reçue."}), 400
+    if 'file' not in request.files:
+        return jsonify({"error": "Aucun fichier envoyé. Utilisez le champ 'file'."}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "Aucun fichier sélectionné."}), 400
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    filename = f"{timestamp}_captured.jpg"
+    filename = f"{timestamp}_{file.filename}"
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-
-    with open(file_path, 'wb') as f:
-        f.write(request.data)
+    file.save(file_path)
 
     unknown_detected, annotated_image_path = detect_and_recognize_faces(file_path, label_map)
 
@@ -240,5 +243,6 @@ def delete_log(log_id):
     return jsonify({"message": f"Log avec ID {log_id} supprimé avec succès"}), 200
 
 if __name__ == '__main__':
+    global label_map
     label_map = train_model()
     app.run(debug=True, host='0.0.0.0', port=5000)
