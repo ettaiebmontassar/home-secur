@@ -132,7 +132,7 @@ def detect_and_recognize_faces(image_path, label_map):
     image = cv2.imread(image_path)
     if image is None:
         app.logger.error("L'image n'a pas pu être chargée.")
-        return False, None
+        raise ValueError("L'image est invalide ou corrompue.")
 
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     faces = face_cascade.detectMultiScale(
@@ -168,67 +168,44 @@ def detect_and_recognize_faces(image_path, label_map):
 
 @app.route('/upload', methods=['POST'])
 def upload_and_analyze_image():
+    global label_map  # Assure que label_map est accessible
     app.logger.info("Requête reçue pour téléversement d'image.")
-    if 'file' not in request.files:
-        app.logger.error("Aucun fichier trouvé dans la requête.")
-        return jsonify({"error": "Aucun fichier envoyé. Utilisez le champ 'file'."}), 400
-
-    file = request.files['file']
-    if file.filename == '':
-        app.logger.error("Aucun fichier sélectionné.")
-        return jsonify({"error": "Aucun fichier sélectionné."}), 400
-
     try:
+        if 'file' not in request.files:
+            app.logger.error("Aucun fichier trouvé dans la requête.")
+            return jsonify({"error": "Aucun fichier envoyé. Utilisez le champ 'file'."}), 400
+
+        file = request.files['file']
+        if file.filename == '':
+            app.logger.error("Aucun fichier sélectionné.")
+            return jsonify({"error": "Aucun fichier sélectionné."}), 400
+
+        # Sauvegarder le fichier
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename = f"{timestamp}_{file.filename}"
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        app.logger.info(f"Sauvegarde du fichier : {file_path}")
         file.save(file_path)
-        app.logger.info(f"Fichier sauvegardé : {file_path}")
 
+        # Analyser l'image
+        app.logger.info("Analyse de l'image...")
         unknown_detected, annotated_image_path = detect_and_recognize_faces(file_path, label_map)
         app.logger.info(f"Analyse terminée. Visage inconnu : {unknown_detected}")
 
+        # Ajouter un événement à la base de données
         event = DetectionEvent(image_path=file_path, annotated_image_path=annotated_image_path)
         db.session.add(event)
         db.session.commit()
         app.logger.info("Événement enregistré dans la base de données.")
 
-        return jsonify({"message": "Image reçue et analysée.", "filename": filename, "unknown_detected": unknown_detected}), 200
+        return jsonify({
+            "message": "Image reçue et analysée.",
+            "filename": filename,
+            "unknown_detected": unknown_detected
+        }), 200
     except Exception as e:
         app.logger.error(f"Erreur pendant le traitement de l'image : {e}")
         return jsonify({"error": "Erreur interne du serveur"}), 500
-
-@app.route('/logs', methods=['GET'])
-def get_logs():
-    app.logger.info("Requête reçue pour récupérer les logs.")
-    events = DetectionEvent.query.all()
-    logs = [
-        {
-            "id": event.id,
-            "timestamp": event.timestamp,
-            "image_path": event.image_path,
-            "annotated_image_path": event.annotated_image_path
-        }
-        for event in events
-    ]
-    return jsonify(logs)
-
-@app.route('/images/<filename>', methods=['GET'])
-def get_image(filename):
-    app.logger.info(f"Requête reçue pour récupérer l'image : {filename}")
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
-
-@app.route('/cleanup', methods=['GET'])
-def cleanup_old_files():
-    app.logger.info("Requête reçue pour nettoyer les fichiers anciens.")
-    now = time.time()
-    for folder in [UPLOAD_FOLDER, ANNOTATED_IMAGES_DIR]:
-        for filename in os.listdir(folder):
-            file_path = os.path.join(folder, filename)
-            if os.path.isfile(file_path) and now - os.path.getmtime(file_path) > 7 * 86400:
-                os.remove(file_path)
-                app.logger.info(f"Fichier supprimé : {file_path}")
-    return jsonify({"message": "Nettoyage terminé"}), 200
 
 if __name__ == '__main__':
     global label_map
