@@ -49,6 +49,9 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 face_recognizer = cv2.face.LBPHFaceRecognizer_create()
 
+# Variable globale pour stocker le label_map
+label_map = None
+
 # Modèle pour les événements détectés
 class DetectionEvent(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -208,6 +211,5 @@ def upload_and_analyze_image():
         return jsonify({"error": "Erreur interne du serveur"}), 500
 
 if __name__ == '__main__':
-    global label_map
-    label_map = train_model()
+    label_map = train_model()  # Entraîne le modèle et initialise globalement label_map
     app.run(debug=True, host='0.0.0.0', port=5000)
