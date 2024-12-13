@@ -186,7 +186,7 @@ def detect_and_recognize_faces(image_path, label_map):
 
 @app.route('/upload', methods=['POST'])
 def upload_and_analyze_image():
-    global label_map  # Assure que label_map est accessible
+    global label_map
     app.logger.info("Requête reçue pour téléversement d'image.")
     try:
         if 'file' not in request.files:
@@ -231,5 +231,8 @@ def upload_and_analyze_image():
         return jsonify({"error": "Erreur interne du serveur"}), 500
 
 if __name__ == '__main__':
-    label_map = train_model()  # Entraîne le modèle et initialise globalement label_map
+    try:
+        label_map = train_model()  # Entraîne le modèle et initialise globalement label_map
+    except Exception as e:
+        app.logger.error(f"Erreur lors de l'entraînement du modèle : {e}")
     app.run(debug=True, host='0.0.0.0', port=5000)
