@@ -149,13 +149,10 @@ def upload_and_analyze_image():
 
 # Endpoint de test pour valider la configuration
 @app.route('/test', methods=['GET'])
-def test_endpoint():
-    try:
-        # Vérifie la disponibilité des données et entraîne le modèle
-        train_model()
-        return jsonify({"message": "Tous les tests ont été passés avec succès."}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+def test_model_ready():
+    if label_map is None:
+        return jsonify({"error": "Le modèle n'a pas été chargé ou entraîné."}), 500
+    return jsonify({"message": "Le modèle LBPH est prêt."}), 200
 
 
 if __name__ == '__main__':
