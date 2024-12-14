@@ -64,6 +64,7 @@ def train_model():
     for person_name in os.listdir(KNOWN_FACES_DIR):
         person_dir = os.path.join(KNOWN_FACES_DIR, person_name)
         if not os.path.isdir(person_dir):
+            logger.warning(f"Ignoré : {person_name} n'est pas un dossier.")
             continue
 
         label_map[label_id] = person_name
@@ -86,7 +87,7 @@ def train_model():
         raise ValueError("Aucun visage valide trouvé.")
 
     face_recognizer.train(np.array(faces), np.array(labels))
-    logger.info("Modèle LBPH entraîné avec succès.")
+    logger.info(f"Modèle LBPH entraîné avec succès avec {len(faces)} visages et {len(label_map)} classes.")
     return label_map
 
 
@@ -151,14 +152,30 @@ def upload_and_analyze_image():
 @app.route('/test', methods=['GET'])
 def test_model_ready():
     if label_map is None:
+        logger.error("Le modèle n'est pas initialisé.")
         return jsonify({"error": "Le modèle n'a pas été chargé ou entraîné."}), 500
     return jsonify({"message": "Le modèle LBPH est prêt."}), 200
 
 
+# Endpoint de débogage pour vérifier les chemins et fichiers
+@app.route('/debug', methods=['GET'])
+def debug_environment():
+    debug_info = {
+        "known_faces_dir": os.path.abspath(KNOWN_FACES_DIR),
+        "annotated_images_dir": os.path.abspath(ANNOTATED_IMAGES_DIR),
+        "uploads_dir": os.path.abspath(UPLOAD_FOLDER),
+        "files_in_known_faces": os.listdir(KNOWN_FACES_DIR) if os.path.exists(KNOWN_FACES_DIR) else "Non trouvé",
+    }
+    logger.info(f"Debug info : {debug_info}")
+    return jsonify(debug_info)
+
+
 if __name__ == '__main__':
     try:
+        logger.info("Initialisation de l'application...")
         label_map = train_model()
+        logger.info("Application initialisée avec succès.")
     except Exception as e:
         logger.error(f"Erreur critique : {e}")
-        exit(1)  # Arrêter si le modèle ne peut pas être entraîné
+        exit(1)
     app.run(debug=True, host='0.0.0.0', port=5000)
