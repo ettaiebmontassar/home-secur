@@ -57,6 +57,10 @@ def train_model():
     label_id = 0
     IMAGE_SIZE = (200, 200)
 
+    if not os.path.exists(KNOWN_FACES_DIR):
+        logger.error(f"Le dossier `known_faces` n'existe pas : {KNOWN_FACES_DIR}")
+        raise ValueError("Le dossier `known_faces` est introuvable.")
+
     if not os.listdir(KNOWN_FACES_DIR):
         logger.error("Le dossier `known_faces` est vide. Ajoutez des images pour entraîner le modèle.")
         raise ValueError("Le dossier `known_faces` est vide.")
@@ -68,6 +72,8 @@ def train_model():
             continue
 
         label_map[label_id] = person_name
+        logger.info(f"Lecture des images pour : {person_name}")
+
         for image_name in os.listdir(person_dir):
             image_path = os.path.join(person_dir, image_name)
             image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
@@ -155,6 +161,18 @@ def test_model_ready():
         logger.error("Le modèle n'est pas initialisé.")
         return jsonify({"error": "Le modèle n'a pas été chargé ou entraîné."}), 500
     return jsonify({"message": "Le modèle LBPH est prêt."}), 200
+
+
+# Endpoint pour entraîner le modèle manuellement
+@app.route('/train', methods=['GET'])
+def train_model_endpoint():
+    global label_map
+    try:
+        label_map = train_model()
+        return jsonify({"message": "Modèle LBPH entraîné avec succès."}), 200
+    except Exception as e:
+        logger.error(f"Erreur pendant l'entraînement : {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 # Endpoint de débogage pour vérifier les chemins et fichiers
