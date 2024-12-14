@@ -1,42 +1,26 @@
 import os
-import time
 import cv2
 import numpy as np
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email import encoders
-import smtplib
-from dotenv import load_dotenv
 import logging
 
-# Initialiser les logs
+# Initialisation des logs
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("FlaskApp")
 
-# Charger les variables d'environnement
-load_dotenv()
-
-EMAIL_SENDER = os.getenv('EMAIL_SENDER')
-EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
-EMAIL_RECIPIENT = os.getenv('EMAIL_RECIPIENT')
-
-# Dossiers pour les données
+# Configuration Flask
 KNOWN_FACES_DIR = "./known_faces"
 ANNOTATED_IMAGES_DIR = "./annotated_images"
-UPLOAD_FOLDER = './uploads'
-DATABASE_FILE = 'sqlite:///database.db'
+UPLOAD_FOLDER = "./uploads"
+DATABASE_FILE = "sqlite:///database.db"
 
-# Initialisation de l'application Flask
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_FILE
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['ANNOTATED_IMAGES_FOLDER'] = ANNOTATED_IMAGES_DIR
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # Limite : 16 Mo
+app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_FILE
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+app.config["ANNOTATED_IMAGES_FOLDER"] = ANNOTATED_IMAGES_DIR
 
 # Initialisation de la base de données
 db = SQLAlchemy(app)
@@ -46,78 +30,41 @@ os.makedirs(KNOWN_FACES_DIR, exist_ok=True)
 os.makedirs(ANNOTATED_IMAGES_DIR, exist_ok=True)
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Modèle LBPH pour la reconnaissance faciale
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+# Initialisation du modèle LBPH
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 face_recognizer = cv2.face.LBPHFaceRecognizer_create()
 
-# Variable globale pour stocker le label_map
+# Variable globale pour le label map
 label_map = None
 
-# Modèle pour les événements détectés
+# Modèle pour la base de données
 class DetectionEvent(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
     image_path = db.Column(db.String(120), nullable=False)
     annotated_image_path = db.Column(db.String(120), nullable=True)
 
-# Création de la base de données au démarrage
+# Création de la base de données
 with app.app_context():
     db.create_all()
 
-
-def send_alert_email(image_path):
-    """
-    Envoie un e-mail d'alerte avec l'image annotée en pièce jointe.
-    """
-    try:
-        subject = "⚠️ Alerte de sécurité : Visage inconnu détecté"
-        body = "Un visage inconnu a été détecté par le système de sécurité. Veuillez vérifier l'image en pièce jointe."
-
-        message = MIMEMultipart()
-        message["From"] = EMAIL_SENDER
-        message["To"] = EMAIL_RECIPIENT
-        message["Subject"] = subject
-        message.attach(MIMEText(body, "plain"))
-
-        with open(image_path, "rb") as attachment:
-            part = MIMEBase("application", "octet-stream")
-            part.set_payload(attachment.read())
-        encoders.encode_base64(part)
-        part.add_header(
-            "Content-Disposition",
-            f"attachment; filename={os.path.basename(image_path)}"
-        )
-        message.attach(part)
-
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.starttls()
-            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-            server.send_message(message)
-
-        logger.info("Alerte email envoyée avec l'image annotée.")
-    except Exception as e:
-        logger.error(f"Erreur lors de l'envoi de l'email : {e}")
-
-
+# Fonction d'entraînement du modèle
 def train_model():
-    """
-    Entraîne le modèle LBPH avec les visages connus dans `KNOWN_FACES_DIR`.
-    """
-    logger.info("Entraînement du modèle LBPH...")
+    logger.info("Début de l'entraînement du modèle LBPH...")
     faces = []
     labels = []
     label_map = {}
     label_id = 0
     IMAGE_SIZE = (200, 200)
 
-    if not os.path.exists(KNOWN_FACES_DIR) or not os.listdir(KNOWN_FACES_DIR):
-        logger.error("Le dossier `known_faces` est vide ou introuvable.")
-        raise ValueError("Ajoutez des images dans `known_faces` pour entraîner le modèle.")
+    if not os.listdir(KNOWN_FACES_DIR):
+        logger.error("Le dossier `known_faces` est vide.")
+        raise ValueError("Le dossier `known_faces` est vide. Ajoutez des images pour entraîner le modèle.")
 
     for person_name in os.listdir(KNOWN_FACES_DIR):
         person_dir = os.path.join(KNOWN_FACES_DIR, person_name)
         if not os.path.isdir(person_dir):
-            logger.warning(f"Ignoré : {person_name} n'est pas un dossier valide.")
+            logger.warning(f"Ignoré : {person_name} n'est pas un dossier.")
             continue
 
         label_map[label_id] = person_name
@@ -138,62 +85,97 @@ def train_model():
         label_id += 1
 
     if not faces:
-        logger.error("Aucun visage valide trouvé pour entraîner le modèle.")
-        raise ValueError("Entraînement annulé : aucun visage valide.")
+        logger.error("Aucun visage valide trouvé pour l'entraînement.")
+        raise ValueError("Entraînement annulé : aucun visage valide trouvé.")
 
     face_recognizer.train(np.array(faces), np.array(labels))
-    logger.info("Modèle LBPH entraîné avec succès.")
+    logger.info(f"Modèle LBPH entraîné avec succès avec {len(faces)} visages et {len(label_map)} classes.")
     return label_map
 
+# Fonction pour analyser une image
+def detect_and_recognize_faces(image_path, label_map):
+    try:
+        image = cv2.imread(image_path)
+        if image is None:
+            logger.error("Image non valide ou introuvable.")
+            return False, None
 
+        gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(
+            gray_image, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+        )
+
+        if len(faces) == 0:
+            logger.info("Aucun visage détecté.")
+            return False, None
+
+        for (x, y, w, h) in faces:
+            face = gray_image[y:y+h, x:x+w]
+            face = cv2.resize(face, (200, 200))
+            label, confidence = face_recognizer.predict(face)
+            name = label_map.get(label, "Inconnu") if confidence < 50 else "Inconnu"
+            color = (0, 255, 0) if name != "Inconnu" else (0, 0, 255)
+            cv2.rectangle(image, (x, y), (x+w, y+h), color, 2)
+            cv2.putText(image, f"{name} ({confidence:.2f})", (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        annotated_image_path = os.path.join(ANNOTATED_IMAGES_DIR, f"annotated_{timestamp}.jpg")
+        cv2.imwrite(annotated_image_path, image)
+
+        return True, annotated_image_path
+    except Exception as e:
+        logger.error(f"Erreur pendant la détection : {e}")
+        raise
+
+# Endpoint pour téléverser et analyser une image
 @app.route('/upload', methods=['POST'])
 def upload_and_analyze_image():
-    """
-    Téléverse et analyse une image envoyée pour détection et reconnaissance faciale.
-    """
     global label_map
-    logger.info("Requête reçue pour téléversement d'image.")
     try:
         if 'file' not in request.files:
-            logger.error("Aucun fichier trouvé dans la requête.")
-            return jsonify({"error": "Aucun fichier envoyé. Utilisez le champ 'file'."}), 400
+            return jsonify({"error": "Aucun fichier envoyé."}), 400
 
         file = request.files['file']
         if file.filename == '':
-            logger.error("Aucun fichier sélectionné.")
             return jsonify({"error": "Aucun fichier sélectionné."}), 400
 
-        # Sauvegarder le fichier
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{timestamp}_{file.filename}"
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file_path = os.path.join(UPLOAD_FOLDER, filename)
         file.save(file_path)
         logger.info(f"Fichier sauvegardé : {file_path}")
 
-        # Vérifier si le modèle est prêt
         if label_map is None:
-            logger.error("Le modèle LBPH n'a pas été entraîné.")
-            return jsonify({"error": "Le modèle n'a pas été entraîné. Ajoutez des visages connus."}), 500
+            return jsonify({"error": "Le modèle n'a pas été entraîné."}), 500
 
-        # Détection et reconnaissance
         unknown_detected, annotated_image_path = detect_and_recognize_faces(file_path, label_map)
-        logger.info(f"Analyse terminée. Visage inconnu : {unknown_detected}")
-
-        # Ajouter un événement à la base de données
-        event = DetectionEvent(image_path=file_path, annotated_image_path=annotated_image_path)
-        db.session.add(event)
-        db.session.commit()
-        logger.info("Événement enregistré dans la base de données.")
-
-        return jsonify({
-            "message": "Image reçue et analysée.",
-            "filename": filename,
-            "unknown_detected": unknown_detected
-        }), 200
+        return jsonify({"message": "Image analysée.", "unknown_detected": unknown_detected}), 200
     except Exception as e:
-        logger.error(f"Erreur pendant le traitement de l'image : {e}")
-        return jsonify({"error": "Erreur interne du serveur"}), 500
+        logger.error(f"Erreur pendant l'analyse : {e}")
+        return jsonify({"error": "Erreur interne."}), 500
 
+# Endpoint pour entraîner le modèle manuellement
+@app.route('/train', methods=['GET'])
+def train_model_endpoint():
+    global label_map
+    try:
+        label_map = train_model()
+        return jsonify({"message": "Modèle LBPH entraîné avec succès."}), 200
+    except Exception as e:
+        logger.error(f"Erreur pendant l'entraînement : {e}")
+        return jsonify({"error": str(e)}), 500
+
+# Endpoint de débogage
+@app.route('/debug', methods=['GET'])
+def debug_environment():
+    debug_info = {
+        "known_faces_dir": os.path.abspath(KNOWN_FACES_DIR),
+        "files_in_known_faces": os.listdir(KNOWN_FACES_DIR) if os.path.exists(KNOWN_FACES_DIR) else "Non trouvé",
+        "annotated_images_dir": os.path.abspath(ANNOTATED_IMAGES_DIR),
+        "uploads_dir": os.path.abspath(UPLOAD_FOLDER)
+    }
+    logger.info(f"Debug info : {debug_info}")
+    return jsonify(debug_info)
 
 if __name__ == '__main__':
     try:
