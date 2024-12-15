@@ -209,6 +209,37 @@ def train_model_endpoint():
         logger.error(f"Erreur pendant l'entraînement : {e}")
         return jsonify({"error": str(e)}), 500
 
+# Endpoint pour afficher les événements
+@app.route('/events', methods=['GET'])
+def get_detection_events():
+    try:
+        events = DetectionEvent.query.all()
+        events_data = [
+            {
+                "id": event.id,
+                "timestamp": event.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                "image_path": event.image_path,
+                "annotated_image_path": event.annotated_image_path
+            }
+            for event in events
+        ]
+        return jsonify({"events": events_data}), 200
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération des événements : {e}")
+        return jsonify({"error": "Erreur interne."}), 500
+
+# Endpoint pour supprimer tous les événements
+@app.route('/delete_all_events', methods=['DELETE'])
+def delete_all_detection_events():
+    try:
+        num_deleted = DetectionEvent.query.delete()
+        db.session.commit()
+        logger.info(f"{num_deleted} événements supprimés.")
+        return jsonify({"message": f"{num_deleted} événements supprimés avec succès."}), 200
+    except Exception as e:
+        logger.error(f"Erreur lors de la suppression des événements : {e}")
+        return jsonify({"error": "Erreur interne."}), 500
+
 # Endpoint pour tester l'envoi d'e-mails
 @app.route('/test_email', methods=['GET'])
 def test_email():
