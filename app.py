@@ -197,6 +197,18 @@ def serve_uploaded_image(filename):
 def serve_annotated_image(filename):
     return send_from_directory(ANNOTATED_IMAGES_DIR, filename)
 
+
+@app.route('/delete_all_events', methods=['DELETE'])
+def delete_all_detection_events():
+    try:
+        num_deleted = DetectionEvent.query.delete()
+        db.session.commit()
+        logger.info(f"{num_deleted} événements supprimés.")
+        return jsonify({"message": f"{num_deleted} événements supprimés avec succès."}), 200
+    except Exception as e:
+        logger.error(f"Erreur lors de la suppression des événements : {e}")
+        return jsonify({"error": "Erreur interne."}), 500
+
 if __name__ == '__main__':
     try:
         label_map = train_model()
