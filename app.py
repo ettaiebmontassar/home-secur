@@ -1,7 +1,7 @@
 import os
 import cv2
 import numpy as np
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 from email.mime.text import MIMEText
@@ -74,17 +74,14 @@ def train_model():
     for person_name in os.listdir(KNOWN_FACES_DIR):
         person_dir = os.path.join(KNOWN_FACES_DIR, person_name)
         if not os.path.isdir(person_dir):
-            logger.warning(f"Ignoré : {person_name} n'est pas un dossier.")
             continue
 
         label_map[label_id] = person_name
-        logger.info(f"Lecture des images pour : {person_name}")
 
         for image_name in os.listdir(person_dir):
             image_path = os.path.join(person_dir, image_name)
             image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
             if image is None:
-                logger.warning(f"Image non valide ignorée : {image_path}")
                 continue
 
             resized_image = cv2.resize(image, IMAGE_SIZE)
@@ -94,11 +91,9 @@ def train_model():
         label_id += 1
 
     if not faces:
-        logger.error("Aucun visage valide trouvé pour l'entraînement.")
-        raise ValueError("Entraînement annulé : aucun visage valide.")
+        raise ValueError("Aucun visage valide trouvé pour l'entraînement.")
 
     face_recognizer.train(np.array(faces), np.array(labels))
-    logger.info(f"Modèle LBPH entraîné avec {len(faces)} visages et {len(label_map)} classes.")
     return label_map
 
 # Fonction pour envoyer un e-mail
@@ -137,137 +132,74 @@ def send_alert_email(image_path):
 def detect_and_recognize_faces(image_path, label_map):
     try:
         image = cv2.imread(image_path)
-        if image is None:
-            logger.error("Image non valide ou introuvable.")
-            return False, None
-
         gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(
-            gray_image, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
-        )
-
-        if len(faces) == 0:
-            logger.info("Aucun visage détecté.")
-            return False, None
+        faces = face_cascade.detectMultiScale(gray_image, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
 
         for (x, y, w, h) in faces:
-            face = gray_image[y:y+h, x:x+w]
-            face = cv2.resize(face, (200, 200))
-            label, confidence = face_recognizer.predict(face)
-            name = label_map.get(label, "Inconnu") if confidence < 50 else "Inconnu"
-            color = (0, 255, 0) if name != "Inconnu" else (0, 0, 255)
-            cv2.rectangle(image, (x, y), (x+w, y+h), color, 2)
-            cv2.putText(image, f"{name} ({confidence:.2f})", (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        annotated_image_path = os.path.join(ANNOTATED_IMAGES_DIR, f"annotated_{timestamp}.jpg")
-        cv2.imwrite(annotated_image_path, image)
-
-        return True, annotated_image_path
+            annotated_image_path = os.path.join(ANNOTATED_IMAGES_DIR, f"annotated_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg")
+            cv2.rectangle(image, (x, y), (x+w, y+h), (0, 255, 0), 2)
+            cv2.imwrite(annotated_image_path, image)
+            return True, annotated_image_path
     except Exception as e:
         logger.error(f"Erreur pendant la détection : {e}")
-        raise
+        return False, None
 
 # Endpoint pour téléverser et analyser une image
 @app.route('/upload', methods=['POST'])
 def upload_and_analyze_image():
     global label_map
-    try:
-        if 'file' not in request.files:
-            return jsonify({"error": "Aucun fichier envoyé."}), 400
+    if 'file' not in request.files:
+        return jsonify({"error": "Aucun fichier envoyé."}), 400
 
-        file = request.files['file']
-        if file.filename == '':
-            return jsonify({"error": "Aucun fichier sélectionné."}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "Aucun fichier sélectionné."}), 400
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{timestamp}_{file.filename}"
-        file_path = os.path.join(UPLOAD_FOLDER, filename)
-        file.save(file_path)
-        logger.info(f"Fichier sauvegardé : {file_path}")
+    filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
+    file_path = os.path.join(UPLOAD_FOLDER, filename)
+    file.save(file_path)
 
-        if label_map is None:
-            return jsonify({"error": "Le modèle n'a pas été entraîné."}), 500
+    unknown_detected, annotated_image_path = detect_and_recognize_faces(file_path, label_map)
 
-        unknown_detected, annotated_image_path = detect_and_recognize_faces(file_path, label_map)
+    new_event = DetectionEvent(
+        image_path=f"/uploads/{filename}",
+        annotated_image_path=f"/annotated_images/{os.path.basename(annotated_image_path)}"
+    )
+    db.session.add(new_event)
+    db.session.commit()
 
-        # Ajouter un événement à la base de données
-        logger.info("Ajout de l'événement à la base de données...")
-        new_event = DetectionEvent(
-            image_path=file_path,
-            annotated_image_path=annotated_image_path
-        )
-        db.session.add(new_event)
-        db.session.commit()
-        logger.info("Événement ajouté avec succès.")
+    if unknown_detected:
+        send_alert_email(annotated_image_path)
 
-        return jsonify({"message": "Image analysée.", "unknown_detected": unknown_detected}), 200
-    except Exception as e:
-        logger.error(f"Erreur pendant l'analyse : {e}")
-        db.session.rollback()  # Annule toute transaction en cas d'erreur
-        return jsonify({"error": "Erreur interne."}), 500
-
-
-# Endpoint pour entraîner le modèle manuellement
-@app.route('/train', methods=['GET'])
-def train_model_endpoint():
-    global label_map
-    try:
-        label_map = train_model()
-        return jsonify({"message": "Modèle LBPH entraîné avec succès."}), 200
-    except Exception as e:
-        logger.error(f"Erreur pendant l'entraînement : {e}")
-        return jsonify({"error": str(e)}), 500
+    return jsonify({"message": "Image analysée.", "unknown_detected": unknown_detected}), 200
 
 # Endpoint pour afficher les événements
 @app.route('/events', methods=['GET'])
 def get_detection_events():
-    try:
-        events = DetectionEvent.query.all()
-        events_data = [
-            {
-                "id": event.id,
-                "timestamp": event.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-                "image_path": event.image_path,
-                "annotated_image_path": event.annotated_image_path
-            }
-            for event in events
-        ]
-        return jsonify({"events": events_data}), 200
-    except Exception as e:
-        logger.error(f"Erreur lors de la récupération des événements : {e}")
-        return jsonify({"error": "Erreur interne."}), 500
+    events = DetectionEvent.query.all()
+    events_data = [
+        {
+            "id": event.id,
+            "timestamp": event.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+            "image_path": event.image_path.replace("\\", "/"),
+            "annotated_image_path": event.annotated_image_path.replace("\\", "/")
+        }
+        for event in events
+    ]
+    return jsonify({"events": events_data}), 200
 
-# Endpoint pour supprimer tous les événements
-@app.route('/delete_all_events', methods=['DELETE'])
-def delete_all_detection_events():
-    try:
-        num_deleted = DetectionEvent.query.delete()
-        db.session.commit()
-        logger.info(f"{num_deleted} événements supprimés.")
-        return jsonify({"message": f"{num_deleted} événements supprimés avec succès."}), 200
-    except Exception as e:
-        logger.error(f"Erreur lors de la suppression des événements : {e}")
-        return jsonify({"error": "Erreur interne."}), 500
+# Ajout des routes pour servir les fichiers
+@app.route('/uploads/<filename>', methods=['GET'])
+def serve_uploaded_image(filename):
+    return send_from_directory(UPLOAD_FOLDER, filename)
 
-# Endpoint pour tester l'envoi d'e-mails
-@app.route('/test_email', methods=['GET'])
-def test_email():
-    try:
-        test_image_path = os.path.join(ANNOTATED_IMAGES_DIR, "test_image.jpg")
-        if not os.path.exists(test_image_path):
-            logger.warning("Génération d'une image factice pour test...")
-            cv2.imwrite(test_image_path, np.zeros((100, 100, 3), dtype=np.uint8))
-
-        send_alert_email(test_image_path)
-        return jsonify({"message": "E-mail envoyé avec succès."}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+@app.route('/annotated_images/<filename>', methods=['GET'])
+def serve_annotated_image(filename):
+    return send_from_directory(ANNOTATED_IMAGES_DIR, filename)
 
 if __name__ == '__main__':
     try:
         label_map = train_model()
-        logger.info("Application Flask démarrée avec succès.")
         app.run(debug=True, host='0.0.0.0', port=5000)
     except Exception as e:
         logger.error(f"Erreur critique au démarrage : {e}")
