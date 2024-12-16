@@ -190,13 +190,23 @@ def upload_and_analyze_image():
             return jsonify({"error": "Le modèle n'a pas été entraîné."}), 500
 
         unknown_detected, annotated_image_path = detect_and_recognize_faces(file_path, label_map)
-        if unknown_detected:
-            send_alert_email(annotated_image_path)
+
+        # Ajouter un événement à la base de données
+        logger.info("Ajout de l'événement à la base de données...")
+        new_event = DetectionEvent(
+            image_path=file_path,
+            annotated_image_path=annotated_image_path
+        )
+        db.session.add(new_event)
+        db.session.commit()
+        logger.info("Événement ajouté avec succès.")
 
         return jsonify({"message": "Image analysée.", "unknown_detected": unknown_detected}), 200
     except Exception as e:
         logger.error(f"Erreur pendant l'analyse : {e}")
+        db.session.rollback()  # Annule toute transaction en cas d'erreur
         return jsonify({"error": "Erreur interne."}), 500
+
 
 # Endpoint pour entraîner le modèle manuellement
 @app.route('/train', methods=['GET'])
